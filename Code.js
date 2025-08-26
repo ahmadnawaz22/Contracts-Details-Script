@@ -1,38 +1,50 @@
 /***** CONFIG *****/
-const SHEET_NAME = "Orderform"; // change if needed
+// Your data tab:
+const SHEET_NAME = 'Orderform';
+
+/**
+ * Header names exactly as they appear in row 1.
+ * Adjust if your sheet uses different labels.
+ */
 const HEADERS = {
-  OrderformCode: "OrderformCode", // Col A
-  CustomerName:  "CustomerName",  // Col C
-  Ref:           "Ref.",          // Col D
-  StartDate:     "StartDate",     // Col E
-  EndDate:       "EndDate",       // Col F
-  SubProduct:    "SubProduct",    // Col I
-  PaymentTerm:   "PaymentTerm",   // Col J
-  LicenseOrdered:"LicenseOrdered",// Col K
-  Price:         "Price",         // Col N
-  Amount:        "Amount"         // Col O
+  OrderformCode: "OrderformCode", // A
+  CustomerName:  "CustomerName",  // C
+  Ref:           "Ref.",          // D (note the dot)
+  StartDate:     "StartDate",     // E
+  EndDate:       "EndDate",       // F
+  SubProduct:    "SubProduct",    // I
+  PaymentTerm:   "PaymentTerm",   // J (change to 'PaymentTerr' if that's your header)
+  LicenseOrdered:"LicenseOrdered",// K
+  Price:         "Price",         // N
+  Amount:        "Amount",        // O
+  Comments:      "Comments",      // S (optional)
+  ClientID:      "ClientID"       // optional column for client id
 };
+
+// Ignore any row where Ref. contains this text (case-insensitive)
+const REF_EXCLUDE_TEXT = "Unsigned Prospect Contract";
 
 /***** MENU *****/
 function onOpen() {
   SpreadsheetApp.getUi()
-    .createMenu('Contracts')
-    .addItem('Open (Sidebar)', 'showSidebar')
-    .addItem('Open (Large Popup)', 'showPopup')   // new
+    .createMenu("Contracts")
+    .addItem("Open (Sidebar)", "showSidebar")
+    .addItem("Open (Large Popup)", "showPopup")
     .addToUi();
 }
 
 function showSidebar() {
-  const html = HtmlService.createHtmlOutputFromFile("Sidebar")
-    .setTitle("Customer Contracts");
+  const t = HtmlService.createTemplateFromFile("Sidebar");
+  t.initialCustomer = '';
+  const html = t.evaluate().setTitle("Customer Contracts");
   SpreadsheetApp.getUi().showSidebar(html);
 }
 
 function showPopup() {
-  const html = HtmlService.createHtmlOutputFromFile('Sidebar')
-    .setWidth(1000)   // <- adjust width in pixels
-    .setHeight(700);  // <- adjust height in pixels
-  SpreadsheetApp.getUi().showModelessDialog(html, 'Customer Contracts'); // or showModalDialog
+  const t = HtmlService.createTemplateFromFile('Sidebar');
+  t.initialCustomer = '';
+  const html = t.evaluate().setWidth(1000).setHeight(700);
+  SpreadsheetApp.getUi().showModelessDialog(html, 'Customer Contracts');
 }
 
 /***** DATA HELPERS *****/
@@ -42,34 +54,53 @@ function _getSheet() {
   return sh;
 }
 
-function _getHeaderIndexes(headerRow) {
-  const map = {};
-  headerRow.forEach((h, i) => (map[h] = i));
-  // sanity check – required headers
-  const required = Object.values(HEADERS);
-  const missing = required.filter(h => !(h in map));
-  if (missing.length) {
-    throw new Error("Missing required headers: " + missing.join(", "));
-  }
-  return map;
-}
-
 function _getAllRows() {
   const sh = _getSheet();
-  const values = sh.getDataRange().getValues(); // includes header row
-  if (values.length < 2) return { headers: [], rows: [] , idx:{} };
+  const values = sh.getDataRange().getValues();
+  if (values.length < 2) return { headers: [], rows: [], idx: {} };
+
   const headers = values[0];
-  const idx = _getHeaderIndexes(headers);
-  const rows = values.slice(1).filter(r => String(r.join("")).trim() !== ""); // non-empty rows
+  const idx = {};
+  headers.forEach((h, i) => { if (h) idx[String(h).trim()] = i; });
+
+  // Required headers
+  const REQUIRED = [
+    HEADERS.OrderformCode,
+    HEADERS.CustomerName,
+    HEADERS.Ref,
+    HEADERS.StartDate,
+    HEADERS.EndDate,
+    HEADERS.SubProduct,
+    HEADERS.LicenseOrdered,
+    HEADERS.Price,
+    HEADERS.Amount
+  ];
+  const missing = REQUIRED.filter(h => !(h in idx));
+  if (missing.length) throw new Error("Missing required headers: " + missing.join(", "));
+
+  // Optional headers: set to -1 if not present
+  [HEADERS.PaymentTerm, HEADERS.Comments, HEADERS.ClientID].forEach(h => {
+    if (!(h in idx)) idx[h] = -1;
+  });
+
+  const rows = values.slice(1).filter(r => String(r.join("")).trim() !== "");
   return { headers, rows, idx };
 }
 
-/***** API: customers *****/
+function _val(row, idx, key) {
+  const i = idx[key];
+  if (i === undefined || i === -1) return "";
+  return row[i];
+}
+
+/***** API: customers (unique, excluding filtered-out Ref.) *****/
 function getCustomers() {
   const { rows, idx } = _getAllRows();
   const set = new Set();
   rows.forEach(r => {
-    const name = r[idx[HEADERS.CustomerName]];
+    const refVal = String(_val(r, idx, HEADERS.Ref) || "");
+    if (refVal.toLowerCase().includes(REF_EXCLUDE_TEXT.toLowerCase())) return;
+    const name = _val(r, idx, HEADERS.CustomerName);
     if (name && String(name).trim() !== "") set.add(String(name).trim());
   });
   return Array.from(set).sort((a,b)=>a.localeCompare(b));
@@ -78,40 +109,58 @@ function getCustomers() {
 /***** API: contracts for a customer *****/
 function getCustomerContracts(customerName) {
   const { rows, idx } = _getAllRows();
-  const filtered = rows.filter(r => String(r[idx[HEADERS.CustomerName]]).trim() === String(customerName).trim());
 
-  // group by OrderformCode
+  const filtered = rows.filter(r => {
+    const name = String(_val(r, idx, HEADERS.CustomerName) || "").trim();
+    if (name !== String(customerName).trim()) return false;
+    const refVal = String(_val(r, idx, HEADERS.Ref) || "");
+    if (refVal.toLowerCase().includes(REF_EXCLUDE_TEXT.toLowerCase())) return false;
+    return true;
+  });
+
+  // Client ID (optional)
+  const clientIds = new Set();
+  filtered.forEach(r => {
+    const cid = String(_val(r, idx, HEADERS.ClientID) || "").trim();
+    if (cid) clientIds.add(cid);
+  });
+
+  // Group by OrderformCode
   const byContract = new Map();
   filtered.forEach(r => {
-    const code = String(r[idx[HEADERS.OrderformCode]]).trim();
+    const code   = String(_val(r, idx, HEADERS.OrderformCode) || "").trim();
+    const refVal = _val(r, idx, HEADERS.Ref) || "";
+
     if (!byContract.has(code)) {
       byContract.set(code, {
         orderformCode: code,
-        ref: r[idx[HEADERS.Ref]] || "",
-        startDate: r[idx[HEADERS.StartDate]] || "",
-        endDate: r[idx[HEADERS.EndDate]] || "",
-        paymentTerm: r[idx[HEADERS.PaymentTerm]] || "",
+        ref: refVal,
+        startDate: _val(r, idx, HEADERS.StartDate) || "",
+        endDate: _val(r, idx, HEADERS.EndDate) || "",
+        paymentTerm: _val(r, idx, HEADERS.PaymentTerm) || "",
         lines: [],
         totalAmount: 0
       });
     }
+
     const line = {
-      subProduct: r[idx[HEADERS.SubProduct]] || "",
-      licenseOrdered: Number(r[idx[HEADERS.LicenseOrdered]] || 0),
-      price: Number(r[idx[HEADERS.Price]] || 0),
-      amount: Number(r[idx[HEADERS.Amount]] || 0)
+      subProduct: _val(r, idx, HEADERS.SubProduct) || "",
+      refValue: refVal || "", // NEW: D column value on each row
+      licenseOrdered: Number(_val(r, idx, HEADERS.LicenseOrdered) || 0),
+      price: Number(_val(r, idx, HEADERS.Price) || 0),
+      amount: Number(_val(r, idx, HEADERS.Amount) || 0),
+      comments: _val(r, idx, HEADERS.Comments) || "" // NEW: S column
     };
+
     const obj = byContract.get(code);
     obj.lines.push(line);
     obj.totalAmount += line.amount;
   });
 
-  // format dates on server (return ISO, client will pretty-print)
   function asISO(d) {
     if (Object.prototype.toString.call(d) === "[object Date]" && !isNaN(d)) {
       return Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd");
     }
-    // sometimes dates are text; just pass through
     return d ? String(d) : "";
   }
 
@@ -121,33 +170,27 @@ function getCustomerContracts(customerName) {
     endDate: asISO(c.endDate)
   }));
 
-  // sort contracts by StartDate then OrderformCode
-  contracts.sort((a,b) => (a.startDate > b.startDate ? 1 : a.startDate < b.startDate ? -1 : a.orderformCode.localeCompare(b.orderformCode)));
+  contracts.sort((a,b) =>
+    (a.startDate > b.startDate ? 1 : a.startDate < b.startDate ? -1 : a.orderformCode.localeCompare(b.orderformCode))
+  );
 
   return {
     customer: customerName,
+    clientId: Array.from(clientIds).join(", "),
     contractCount: contracts.length,
     currencyHint: "AED",
     contracts
   };
 }
 
-// Opens the large popup (modeless dialog)
-function showPopup() {
-  const t = HtmlService.createTemplateFromFile('Sidebar');
-  t.initialCustomer = ''; // no preselection
-  const html = t.evaluate().setWidth(1000).setHeight(700);
-  SpreadsheetApp.getUi().showModelessDialog(html, 'Customer Contracts');
-}
-
-// Opens the popup and preselects the customer typed in ContractsStatus!B2
+/***** Optional: open from ContractsStatus!B2 *****/
 function openPopupFromStatus() {
   const sh = SpreadsheetApp.getActive().getSheetByName('ContractsStatus');
   if (!sh) throw new Error('Sheet "ContractsStatus" not found');
   const selected = (sh.getRange('B2').getDisplayValue() || '').trim();
 
   const t = HtmlService.createTemplateFromFile('Sidebar');
-  t.initialCustomer = selected; // pass initial selection to HTML
+  t.initialCustomer = selected;
   const html = t.evaluate().setWidth(1000).setHeight(700);
   SpreadsheetApp.getUi().showModelessDialog(html, 'Customer Contracts');
 }
