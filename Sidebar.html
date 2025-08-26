@@ -16,13 +16,11 @@
       h2 { margin: 0 0 12px; font-size: 16px; }
 
       label { font-weight: 600; display: block; margin: 6px 0 4px; }
-      select, button, input[type="text"] {
+      select, button {
         width: 100%; padding: 8px; margin: 6px 0 12px;
         border: 1px solid #ddd; border-radius: 8px; font-size: 14px;
       }
-      button {
-        cursor: pointer; border: 1px solid #ddd; background: #fff;
-      }
+      button { cursor: pointer; background: #fff; }
       button:disabled { opacity: 0.6; cursor: not-allowed; }
 
       .spinner { display: none; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
@@ -38,23 +36,17 @@
       .row > div { flex: 1 1 140px; min-width: 140px; }
 
       table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-      th, td { border-bottom: 1px solid #eee; padding: 6px 4px; text-align: left; font-size: 13px; }
+      th, td { border-bottom: 1px solid #eee; padding: 6px 4px; text-align: left; font-size: 13px; vertical-align: top; }
       th { background: #fafafa; }
       .right { text-align: right; }
       .total { font-weight: bold; }
 
       details { border-radius: var(--radius); }
-      details summary {
-        cursor: pointer; font-weight: 600; list-style: none; outline: none;
-      }
+      details summary { cursor: pointer; font-weight: 600; list-style: none; outline: none; }
       details summary::-webkit-details-marker { display: none; }
 
-      .badge {
-        display:inline-block; padding:2px 6px; border-radius:6px;
-        background: var(--chip); font-size: 11px;
-      }
+      .badge { display:inline-block; padding:2px 6px; border-radius:6px; background: var(--chip); font-size: 11px; }
 
-      /* Optional: a little breathing space on narrow sidebars */
       @media (max-width: 360px) {
         body { font-size: 13px; }
         th, td { font-size: 12px; }
@@ -73,25 +65,18 @@
     <div id="result" aria-live="polite"></div>
 
     <script>
-      // If Apps Script passed a preselected customer (e.g., from ContractsStatus!B2),
-      // it will show up here. Works even if not provided.
-      const INITIAL_CUSTOMER = <?=
-        // ensure robust default even if 'initialCustomer' wasn't set in the template
-        JSON.stringify(initialCustomer || '')
-      ?>;
+      // Passed from Apps Script template (may be empty):
+      const INITIAL_CUSTOMER = <?= JSON.stringify(initialCustomer || '') ?>;
 
       const fmt = {
         date(s) {
           if (!s) return "";
           const d = new Date(s);
           if (!isNaN(d)) {
-            try {
-              return d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "2-digit" });
-            } catch (_) {
-              return d.toDateString();
-            }
+            try { return d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "2-digit" }); }
+            catch (_) { return d.toDateString(); }
           }
-          return s; // already a readable string
+          return s;
         },
         num(n) { return (typeof n === "number" && isFinite(n)) ? n.toLocaleString() : (n ?? ""); },
         money(n) {
@@ -107,17 +92,15 @@
         document.getElementById("customerSel").disabled = is;
       }
 
-      // Populate customer dropdown
+      // Populate dropdown
       google.script.run
         .withSuccessHandler(customers => {
           const sel = document.getElementById("customerSel");
           sel.innerHTML = customers.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
-
           if (INITIAL_CUSTOMER && customers.includes(INITIAL_CUSTOMER)) {
             sel.value = INITIAL_CUSTOMER;
             loadContracts();
           } else if (customers.length) {
-            // Auto-load first customer for convenience
             loadContracts();
           }
         })
@@ -150,9 +133,12 @@
           return;
         }
 
-        const { customer, contracts, contractCount } = data;
+        const { customer, clientId, contracts, contractCount } = data;
         const parts = [];
-        parts.push(`<div class="muted">Showing ${contractCount} contract(s) for <b>${escapeHtml(customer)}</b></div>`);
+        parts.push(`<div class="muted">
+            Showing ${contractCount} contract(s) for <b>${escapeHtml(customer)}</b>
+            ${clientId ? `<br><span>Client ID: ${escapeHtml(clientId)}</span>` : ``}
+          </div>`);
 
         contracts.forEach(c => {
           const header =
@@ -167,9 +153,11 @@
           const lines = (c.lines || []).map(l => `
             <tr>
               <td>${escapeHtml(l.subProduct || "-")}</td>
+              <td>${escapeHtml(l.refValue || "-")}</td>         <!-- NEW: D Ref. per row -->
               <td class="right">${fmt.num(Number(l.licenseOrdered))}</td>
               <td class="right">${fmt.money(Number(l.price))}</td>
               <td class="right">${fmt.money(Number(l.amount))}</td>
+              <td>${escapeHtml(l.comments || "")}</td>          <!-- NEW: S Comments -->
             </tr>`).join("");
 
           const table = `
@@ -177,16 +165,19 @@
               <thead>
                 <tr>
                   <th>SubProduct</th>
+                  <th>Ref.</th>
                   <th class="right">License Ordered</th>
                   <th class="right">Price</th>
                   <th class="right">Amount</th>
+                  <th>Comments</th>
                 </tr>
               </thead>
               <tbody>${lines}</tbody>
               <tfoot>
                 <tr class="total">
-                  <td colspan="3" class="right">Contract Total</td>
+                  <td colspan="4" class="right">Contract Total</td>
                   <td class="right">${fmt.money(Number(c.totalAmount))}</td>
+                  <td></td>
                 </tr>
               </tfoot>
             </table>`;
@@ -203,7 +194,6 @@
         container.innerHTML = parts.join("");
       }
 
-      // Basic HTML escaping to avoid any issues with special characters in names
       function escapeHtml(s) {
         return String(s ?? "")
           .replace(/&/g, "&amp;")
