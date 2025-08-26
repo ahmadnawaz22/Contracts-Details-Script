@@ -4,53 +4,27 @@
     <meta charset="UTF-8" />
     <title>Customer Contracts</title>
     <style>
-      :root {
-        --pad: 12px;
-        --radius: 10px;
-        --muted: #666;
-        --line: #eaeaea;
-        --chip: #f1f5f9;
-      }
-      html, body { margin: 0; padding: 0; }
-      body { font-family: Arial, sans-serif; padding: var(--pad); font-size: 14px; }
-      h2 { margin: 0 0 12px; font-size: 16px; }
-
-      label { font-weight: 600; display: block; margin: 6px 0 4px; }
-      select, button {
-        width: 100%; padding: 8px; margin: 6px 0 12px;
-        border: 1px solid #ddd; border-radius: 8px; font-size: 14px;
-      }
-      button { cursor: pointer; background: #fff; }
-      button:disabled { opacity: 0.6; cursor: not-allowed; }
-
-      .spinner { display: none; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-
-      .card {
-        border: 1px solid var(--line); border-radius: var(--radius);
-        padding: var(--pad); margin: 10px 0;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.06); background: #fff;
-      }
-      .muted { color: var(--muted); font-size: 12px; }
-
-      .row { display: flex; gap: 8px; flex-wrap: wrap; }
-      .row > div { flex: 1 1 140px; min-width: 140px; }
-
-      table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-      th, td { border-bottom: 1px solid #eee; padding: 6px 4px; text-align: left; font-size: 13px; vertical-align: top; }
-      th { background: #fafafa; }
-      .right { text-align: right; }
-      .total { font-weight: bold; }
-
-      details { border-radius: var(--radius); }
-      details summary { cursor: pointer; font-weight: 600; list-style: none; outline: none; }
-      details summary::-webkit-details-marker { display: none; }
-
-      .badge { display:inline-block; padding:2px 6px; border-radius:6px; background: var(--chip); font-size: 11px; }
-
-      @media (max-width: 360px) {
-        body { font-size: 13px; }
-        th, td { font-size: 12px; }
-      }
+      :root { --pad:12px; --radius:10px; --muted:#666; --line:#eaeaea; --chip:#f1f5f9; }
+      html, body { margin:0; padding:0; }
+      body { font-family: Arial, sans-serif; padding: var(--pad); font-size:14px; }
+      h2 { margin:0 0 12px; font-size:16px; }
+      label { font-weight:600; display:block; margin:6px 0 4px; }
+      select, button { width:100%; padding:8px; margin:6px 0 12px; border:1px solid #ddd; border-radius:8px; font-size:14px; }
+      button { background:#fff; cursor:pointer; }
+      button:disabled { opacity:.6; cursor:not-allowed; }
+      .spinner { display:none; font-size:12px; color:var(--muted); margin-bottom:6px; }
+      .card { border:1px solid var(--line); border-radius:var(--radius); padding:var(--pad); margin:10px 0; box-shadow:0 1px 2px rgba(0,0,0,.06); background:#fff; }
+      .muted { color:var(--muted); font-size:12px; }
+      .row { display:flex; gap:8px; flex-wrap:wrap; }
+      .row > div { flex:1 1 140px; min-width:140px; }
+      table { width:100%; border-collapse:collapse; margin-top:8px; }
+      th, td { border-bottom:1px solid #eee; padding:6px 4px; text-align:left; font-size:13px; vertical-align:top; }
+      th { background:#fafafa; }
+      .right { text-align:right; }
+      .total { font-weight:bold; }
+      details summary { cursor:pointer; font-weight:600; list-style:none; outline:none; }
+      details summary::-webkit-details-marker { display:none; }
+      .badge { display:inline-block; padding:2px 6px; border-radius:6px; background:var(--chip); font-size:11px; }
     </style>
   </head>
   <body>
@@ -65,84 +39,67 @@
     <div id="result" aria-live="polite"></div>
 
     <script>
-      // Passed from Apps Script template (may be empty):
-      const INITIAL_CUSTOMER = <?= JSON.stringify(initialCustomer || '') ?>;
+      const INITIAL_CUSTOMER = <?= JSON.stringify(initialCustomer || "") ?>;
 
       const fmt = {
-        date(s) {
-          if (!s) return "";
-          const d = new Date(s);
-          if (!isNaN(d)) {
-            try { return d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "2-digit" }); }
-            catch (_) { return d.toDateString(); }
-          }
-          return s;
-        },
-        num(n) { return (typeof n === "number" && isFinite(n)) ? n.toLocaleString() : (n ?? ""); },
-        money(n) {
-          return (typeof n === "number" && isFinite(n))
-            ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-            : (n ?? "");
-        }
+        date(s){ if(!s) return ""; const d=new Date(s); return isNaN(d)? s : d.toLocaleDateString(undefined,{day:"2-digit",month:"short",year:"2-digit"}); },
+        num(n){ return (typeof n==="number"&&isFinite(n))? n.toLocaleString(): (n??""); },
+        money(n){ return (typeof n==="number"&&isFinite(n))? n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) : (n??""); }
       };
 
-      function setLoading(is) {
-        document.getElementById("spinner").style.display = is ? "block" : "none";
-        document.getElementById("loadBtn").disabled = is;
-        document.getElementById("customerSel").disabled = is;
-      }
+      function escapeHtml(s){ return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;"); }
+      function setLoading(is){ spinner.style.display = is? "block":"none"; loadBtn.disabled = is; customerSel.disabled = is; }
 
-      // Populate dropdown
+      const customerSel = document.getElementById("customerSel");
+      const loadBtn = document.getElementById("loadBtn");
+      const spinner = document.getElementById("spinner");
+      const result = document.getElementById("result");
+
+      // One-shot bootstrap
+      setLoading(true);
       google.script.run
-        .withSuccessHandler(customers => {
-          const sel = document.getElementById("customerSel");
-          sel.innerHTML = customers.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
-          if (INITIAL_CUSTOMER && customers.includes(INITIAL_CUSTOMER)) {
-            sel.value = INITIAL_CUSTOMER;
-            loadContracts();
-          } else if (customers.length) {
-            loadContracts();
-          }
+        .withSuccessHandler(({customers, selected, firstPayload}) => {
+          customerSel.innerHTML = customers.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+          if (selected && customers.includes(selected)) customerSel.value = selected;
+          render(firstPayload);
+          setLoading(false);
         })
         .withFailureHandler(err => {
-          document.getElementById("result").innerHTML = `<div class="card">Error loading customers: ${escapeHtml(err && err.message ? err.message : String(err))}</div>`;
+          setLoading(false);
+          result.innerHTML = `<div class="card">Error: ${escapeHtml(err && err.message ? err.message : String(err))}</div>`;
         })
-        .getCustomers();
+        .bootstrap(INITIAL_CUSTOMER);
 
-      document.getElementById("loadBtn").addEventListener("click", loadContracts);
+      loadBtn.addEventListener("click", loadContracts);
+      customerSel.addEventListener("change", loadContracts);
 
       function loadContracts() {
-        const customer = document.getElementById("customerSel").value;
+        const customer = customerSel.value;
         if (!customer) return;
         setLoading(true);
         google.script.run
           .withSuccessHandler(render)
           .withFailureHandler(err => {
             setLoading(false);
-            document.getElementById("result").innerHTML =
-              `<div class="card">Error: ${escapeHtml(err && err.message ? err.message : String(err))}</div>`;
+            result.innerHTML = `<div class="card">Error: ${escapeHtml(err && err.message ? err.message : String(err))}</div>`;
           })
           .getCustomerContracts(customer);
       }
 
       function render(data) {
         setLoading(false);
-        const container = document.getElementById("result");
         if (!data || !Array.isArray(data.contracts) || data.contracts.length === 0) {
-          container.innerHTML = `<div class="card">No contracts found for <b>${escapeHtml(data && data.customer ? data.customer : "")}</b>.</div>`;
+          result.innerHTML = `<div class="card">No contracts found for <b>${escapeHtml(data && data.customer ? data.customer : "")}</b>.</div>`;
           return;
         }
 
         const { customer, clientId, contracts, contractCount } = data;
         const parts = [];
-        parts.push(`<div class="muted">
-            Showing ${contractCount} contract(s) for <b>${escapeHtml(customer)}</b>
-            ${clientId ? `<br><span>Client ID: ${escapeHtml(clientId)}</span>` : ``}
-          </div>`);
+        parts.push(`<div class="muted">Showing ${contractCount} contract(s) for <b>${escapeHtml(customer)}</b>${clientId ? `<br>Client ID: ${escapeHtml(clientId)}` : ""}</div>`);
 
         contracts.forEach(c => {
-          const header =
-            `<div class="row">
+          const header = `
+            <div class="row">
               <div><span class="badge">Orderform</span><br><b>${escapeHtml(c.orderformCode || "-")}</b></div>
               <div><span class="badge">Ref.</span><br>${escapeHtml(c.ref || "-")}</div>
               <div><span class="badge">Start</span><br>${fmt.date(c.startDate)}</div>
@@ -150,14 +107,14 @@
               <div><span class="badge">Payment Term</span><br>${escapeHtml(c.paymentTerm || "-")}</div>
             </div>`;
 
-          const lines = (c.lines || []).map(l => `
+          // NOTE: Ref. column removed from lines; Comments moved into its place
+          const rows = (c.lines || []).map(l => `
             <tr>
               <td>${escapeHtml(l.subProduct || "-")}</td>
-              <td>${escapeHtml(l.refValue || "-")}</td>         <!-- NEW: D Ref. per row -->
+              <td>${escapeHtml(l.comments || "")}</td>
               <td class="right">${fmt.num(Number(l.licenseOrdered))}</td>
               <td class="right">${fmt.money(Number(l.price))}</td>
               <td class="right">${fmt.money(Number(l.amount))}</td>
-              <td>${escapeHtml(l.comments || "")}</td>          <!-- NEW: S Comments -->
             </tr>`).join("");
 
           const table = `
@@ -165,42 +122,29 @@
               <thead>
                 <tr>
                   <th>SubProduct</th>
-                  <th>Ref.</th>
+                  <th>Comments</th>
                   <th class="right">License Ordered</th>
                   <th class="right">Price</th>
                   <th class="right">Amount</th>
-                  <th>Comments</th>
                 </tr>
               </thead>
-              <tbody>${lines}</tbody>
+              <tbody>${rows}</tbody>
               <tfoot>
                 <tr class="total">
                   <td colspan="4" class="right">Contract Total</td>
                   <td class="right">${fmt.money(Number(c.totalAmount))}</td>
-                  <td></td>
                 </tr>
               </tfoot>
             </table>`;
 
-          parts.push(
-            `<details class="card" open>
-               <summary>${escapeHtml(c.orderformCode || "-")} — ${fmt.date(c.startDate)} → ${fmt.date(c.endDate)}</summary>
-               ${header}
-               ${table}
-             </details>`
-          );
+          parts.push(`<details class="card" open>
+              <summary>${escapeHtml(c.orderformCode || "-")} — ${fmt.date(c.startDate)} → ${fmt.date(c.endDate)}</summary>
+              ${header}
+              ${table}
+            </details>`);
         });
 
-        container.innerHTML = parts.join("");
-      }
-
-      function escapeHtml(s) {
-        return String(s ?? "")
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#039;");
+        result.innerHTML = parts.join("");
       }
     </script>
   </body>
