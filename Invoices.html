@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Invoices</title>
+  <style>
+    :root { --pad:12px; --line:#eaeaea; --radius:12px; }
+    html, body { margin:0; padding:0; }
+    body { font-family: Arial, sans-serif; font-size:14px; padding: var(--pad); background:#3377FF; color:#111; }
+    h2 { margin:0 0 12px; font-size:18px; }
+
+    .filters { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:8px; }
+    .field { min-width:180px; flex:1; }
+    label { display:block; font-weight:600; margin:6px 0 4px; }
+    select { width:100%; padding:8px; border:1px solid #ddd; border-radius:8px; background:#fff; font-size:14px; }
+
+    .spinner { font-size:12px; color:#666; margin:6px 0; display:none; }
+    .note    { font-size:12px; color:#555; margin:4px 0 8px; }
+
+    .card {
+      background:#fff; border:1px solid var(--line); border-radius:var(--radius); padding:var(--pad);
+      margin:10px 0; box-shadow:0 1px 2px rgba(0,0,0,.06);
+    }
+    .card h3 { margin:0 0 8px; font-size:16px; }
+
+    .table-wrap { width:100%; overflow-x:auto; }
+    table { width:100%; border-collapse:collapse; table-layout:fixed; }
+    th, td { border-bottom:1px solid #eee; padding:6px 8px; text-align:left; vertical-align:top; font-size:13px; }
+    th { background:#fafafa; }
+    .col-inv{width:16%} .col-ctr{width:16%} .col-iss{width:12%} .col-due{width:12%} .col-desc{width:30%} .col-amt{width:7%} .col-bal{width:7%}
+    th.balance, td.balance { font-weight:700; }
+  </style>
+</head>
+<body>
+  <h2>Invoices</h2>
+
+  <div class="filters">
+    <div class="field">
+      <label for="riskSel">Risk</label>
+      <!-- fixed set: All (no filter), Expected (blank risk), Doubtful -->
+      <select id="riskSel">
+        <option value="__all__">All</option>
+        <option value="__expected__">Expected</option>
+        <option value="Doubtful">Doubtful</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="tierSel">Status</label>
+      <!-- fixed set: default Receivable; All = no status filter -->
+      <select id="tierSel">
+        <option value="Receivable" selected>Receivable</option>
+        <option value="__all__">All</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="customerSel">Customer</label>
+      <select id="customerSel"></select> <!-- default set in JS -->
+    </div>
+    <div class="field">
+      <label for="amSel">Account Manager</label>
+      <select id="amSel"></select> <!-- default set in JS -->
+    </div>
+  </div>
+
+  <div id="spinner" class="spinner">Loading…</div>
+  <div id="note" class="note"></div>
+  <div id="result" aria-live="polite"></div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const riskSel = $('riskSel'), tierSel = $('tierSel'), customerSel = $('customerSel'), amSel = $('amSel');
+    const spinner = $('spinner'), result = $('result'), note = $('note');
+
+    // Sentinels for "no filter"
+    const ALL = "__all__";
+    const RISK_EXPECTED = "__expected__"; // blank risk
+
+    // Defaults
+    const DEFAULTS = { risk: RISK_EXPECTED, tier: "Receivable", customer: ALL, am: ALL };
+
+    let full = [];   // issued invoices
+    let dbg  = null; // debug meta (optional)
+
+    const fmt = {
+      date(s){ if(!s) return ""; const d=new Date(s); return isNaN(d)? s : d.toLocaleDateString(undefined,{day:"2-digit",month:"short",year:"2-digit"}); },
+      money(n){ return (typeof n==="number"&&isFinite(n)) ? n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) : (n??""); }
+    };
+    const esc = s => String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");
+
+    spinner.style.display = 'block';
+    google.script.run
+      .withSuccessHandler(payload => {
+        spinner.style.display = 'none';
+        full = (payload && payload.invoices) ? payload.invoices : [];
+        dbg  = payload && payload.debug ? payload.debug : null;
+        if (!full.length && dbg) {
+          note.textContent = `No Issued=Yes invoices found. Source: ${dbg.sheet} @ ${dbg.spreadsheetId}. Rows scanned: ${dbg.totalRows}.`;
+        } else {
+          note.textContent = '';
+        }
+        initFilters();
+        render();
+      })
+      .withFailureHandler(err => {
+        spinner.style.display = 'none';
+        result.innerHTML = `<div class="card">Error: ${esc(err && err.message ? err.message : String(err))}</div>`;
+      })
+      .getInvoicesIssued();
+
+    /* ---------- Filters ---------- */
+    function initFilters(){
+      // Customer + AM are dependent; risk/tier are fixed sets
+      refreshDependentOptions();
+      riskSel.value = DEFAULTS.risk;
+      tierSel.value = DEFAULTS.tier;
+      customerSel.value = ALL;
+      amSel.value = ALL;
+
+      riskSel.onchange = onFilterChange;
+      tierSel.onchange = onFilterChange;
+      customerSel.onchange = onFilterChange;
+      amSel.onchange = onFilterChange;
+    }
+
+    function onFilterChange(){ refreshDependentOptions(); render(); }
+
+    function currentSelection(){
+      return {
+        risk:      riskSel.value || DEFAULTS.risk,      // "__all__", "__expected__", "Doubtful"
+        tier:      tierSel.value || DEFAULTS.tier,      // "Receivable" or "__all__"
+        customer:  customerSel.value || ALL,            // "__all__" or a name
+        am:        amSel.value || ALL                   // "__all__" or a name
+      };
+    }
+
+    function filterRows(sel){
+      return full.filter(r => {
+        // RISK
+        if (sel.risk && sel.risk !== ALL) {
+          if (sel.risk === RISK_EXPECTED) {
+            if ((r.risk || "").trim() !== "") return false;   // blank only
+          } else if (sel.risk === "Doubtful") {
+            if (r.risk !== "Doubtful") return false;          // normalized on server
+          }
+        }
+        // STATUS / TIER
+        if (sel.tier && sel.tier !== ALL && r.tier !== sel.tier) return false;
+
+        // CUSTOMER
+        if (sel.customer && sel.customer !== ALL && r.customer !== sel.customer) return false;
+
+        // ACCOUNT MANAGER
+        if (sel.am && sel.am !== ALL && r.accountManager !== sel.am) return false;
+
+        return true; // Issued already enforced on server
+      });
+    }
+
+    function refreshDependentOptions(){
+      const sel = currentSelection();
+
+      // Customer options based on all filters except Customer
+      const baseForCustomer = filterRows({ ...sel, customer: ALL });
+      const custSet = new Set(baseForCustomer.map(r => r.customer).filter(Boolean));
+      const customers = [ALL, ...Array.from(custSet).sort((a,b)=>a.localeCompare(b))];
+      customerSel.innerHTML = customers.map(v =>
+        `<option value="${esc(v)}"${v===(customers.includes(sel.customer)?sel.customer:ALL) ? " selected":""}>${esc(v===ALL ? "All Customers" : v)}</option>`
+      ).join("");
+
+      // AM options based on all filters except AM
+      const baseForAM = filterRows({ ...sel, am: ALL });
+      const amSet = new Set(baseForAM.map(r => r.accountManager).filter(Boolean));
+      const ams = [ALL, ...Array.from(amSet).sort((a,b)=>a.localeCompare(b))];
+      amSel.innerHTML = ams.map(v =>
+        `<option value="${esc(v)}"${v===(ams.includes(sel.am)?sel.am:ALL) ? " selected":""}>${esc(v===ALL ? "All" : v)}</option>`
+      ).join("");
+    }
+
+    /* ---------- Render ---------- */
+    function render(){
+      const rows = filterRows(currentSelection());
+
+      if (!rows.length) {
+        result.innerHTML = `<div class="card">No invoices match the selected filters.</div>`;
+        return;
+      }
+
+      // Group by customer
+      const byCustomer = new Map();
+      rows.forEach(r => {
+        if (!byCustomer.has(r.customer)) byCustomer.set(r.customer, []);
+        byCustomer.get(r.customer).push(r);
+      });
+
+      const customers = Array.from(byCustomer.keys()).sort((a,b)=>a.localeCompare(b));
+      const parts = customers.map(cust => {
+        const list = byCustomer.get(cust).slice().sort((a,b)=> (a.dueDate||"").localeCompare(b.dueDate||""));
+        const rowsHtml = list.map(r => `
+          <tr>
+            <td>${esc(r.invoiceNumber)}</td>
+            <td>${esc(r.contract)}</td>
+            <td>${fmt.date(r.issueDate)}</td>
+            <td>${fmt.date(r.dueDate)}</td>
+            <td>${esc(r.description)}</td>
+            <td>${fmt.money(r.amountUSD)}</td>
+            <td class="balance">${fmt.money(r.balance)}</td>
+          </tr>`).join("");
+
+        return `
+          <div class="card">
+            <h3>${esc(cust)}</h3>
+            <div class="table-wrap">
+              <table>
+                <colgroup>
+                  <col class="col-inv"><col class="col-ctr"><col class="col-iss"><col class="col-due"><col class="col-desc"><col class="col-amt"><col class="col-bal">
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>Invoice Number</th>
+                    <th>Contract</th>
+                    <th>Issue Date</th>
+                    <th>Due Date</th>
+                    <th>Description</th>
+                    <th>Amount USD</th>
+                    <th class="balance">Balance</th>
+                  </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+              </table>
+            </div>
+          </div>`;
+      });
+
+      result.innerHTML = parts.join("");
+    }
+  </script>
+</body>
+</html>
